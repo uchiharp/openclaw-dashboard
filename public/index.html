@@ -28,7 +28,7 @@
   <!-- 左侧边栏 -->
   <aside class="w-72 bg-card border-r border-border flex flex-col shrink-0">
     <div class="p-4 border-b border-border">
-      <h1 class="text-lg font-bold flex items-center gap-2">
+      <h1 class="text-lg font-bold flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity select-none" @click="selectedAgent = null; expandedSession = null; sessionContent = [];" role="button" tabindex="0" @keydown.enter="selectedAgent = null">
         🦞 OpenClaw 控制台
       </h1>
       <div class="text-xs text-gray-500 mt-1 flex items-center gap-2">
@@ -164,15 +164,15 @@
           <div class="ml-auto flex gap-2">
             <button @click="archiveAgent(selectedAgent.id)"
                     :disabled="archiveInProgress"
-                    class="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition disabled:opacity-50 disabled:cursor-not-allowed border border-blue-400/40"
+                    class="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition disabled:opacity-50 disabled:cursor-not-allowed ring-1 ring-blue-400/40"
                     x-text="archiveInProgress ? '⏳ 蒸馏中...' : '📦 归档会话'">
             </button>
             <button @click="resetAgent(selectedAgent.id)"
-                    class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg font-medium transition border border-red-400/40">
+                    class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg font-medium transition ring-1 ring-red-400/40">
               🗑 重置所有会话
             </button>
             <button @click="refreshAgent(selectedAgent.id)"
-                    class="px-3 py-1.5 text-sm bg-gray-600 hover:bg-gray-500 text-white rounded-lg font-medium transition border border-gray-400/40">
+                    class="px-3 py-1.5 text-sm bg-gray-700/60 hover:bg-gray-600/60 text-gray-300 hover:text-white rounded-lg font-medium transition ring-1 ring-gray-500/30">
               🔄 刷新
             </button>
           </div>
@@ -246,7 +246,7 @@
                           x-text="expandedSession === session.sessionId ? '▲' : '▼'"
                           @click.stop></span>
                     <button @click.stop="if(confirm('确定终止会话？\\n' + formatSessionKey(session.sessionKey))) killSession(session.sessionId)"
-                            class="text-xs px-2.5 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded-md font-medium transition border border-orange-400/40">
+                            class="text-xs px-2.5 py-1 bg-transparent hover:bg-orange-600/20 text-orange-400 hover:text-orange-300 rounded-md font-medium transition ring-1 ring-orange-500/30">
                       终止
                     </button>
                   </div>
