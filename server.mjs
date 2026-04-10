@@ -76,7 +76,7 @@ function safeReadJSON(filePath) {
 
 function safeExec(cmd, timeout = 5000) {
   try {
-    const result = execSync(cmd, { timeout, encoding: 'utf-8', shell: '/bin/zsh' });
+    const result = execSync(cmd, { timeout, encoding: 'utf-8', shell: true });
     return { data: result.trim(), quality: 'ok' };
   } catch (e) {
     return { data: null, quality: 'error', error: e.message.slice(0, 200) };
@@ -97,7 +97,7 @@ function tailJSONL(filePath, n = 30) {
     const lines = content.split('\n').filter(Boolean);
     const result = [];
     for (let i = lines.length - 1; i >= 0 && result.length < n; i--) {
-      try { result.unshift(JSON.parse(lines[i])); } catch {}
+      try { result.unshift(JSON.parse(lines[i])); } catch (lineErr) { /* skip malformed line */ }
     }
     return result;
   } catch { return []; }
@@ -395,9 +395,11 @@ app.delete('/api/sessions/:sessionId', (req, res) => {
       const backupDir = path.join(OPENCLAW_HOME, 'workspace', 'memory', 'sessions', agentId);
       try {
         fs.mkdirSync(backupDir, { recursive: true });
-        fs.writeFileSync(path.join(backupDir, `${sessionId}.meta.json`), JSON.stringify({
+        const metaPath = path.join(backupDir, `${sessionId}.meta.json`);
+        fs.mkdirSync(path.dirname(metaPath), { recursive: true });
+        atomicWriteJSON(metaPath, {
           ...data[targetKey], killedAt: new Date().toISOString(), killedBy: 'dashboard',
-        }, null, 2));
+        });
       } catch {}
 
       delete data[targetKey];
@@ -469,7 +471,7 @@ app.post('/api/agents/:id/sessions/archive', async (req, res) => {
     const backedUp = [];
     for (const s of archivable) {
       const dest = path.join(backupDir, `${s.sid}.jsonl`);
- try {
+      try {
         fs.copyFileSync(s.jsonlPath, dest);
         backedUp.push(s.sid);
       } catch {}
@@ -524,7 +526,7 @@ app.post('/api/agents/:id/sessions/archive', async (req, res) => {
             const distillPrompt = `请将以下对话蒸馏为不超过300字的摘要。只保留关键决策、重要结论和待办事项，去掉闲聊和重复内容。直接输出摘要，不要加任何前缀。\n\n---\n${dialogContent.slice(0, 8000)}`;
             // 用 execSync 同步调用（在 async 块中可以 wrap）
             const result = execSync(`openclaw agent --agent learn --message ${JSON.stringify(distillPrompt)}`, {
-                timeout: 60000, encoding: 'utf-8', shell: '/bin/zsh'
+                timeout: 60000, encoding: 'utf-8', shell: true
               }).trim();
             if (result && result.length > 10) {
               summary = result.slice(0, 1000);
@@ -651,9 +653,11 @@ app.get('/api/events', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   sseClients.add(res);
-  req.on('close', () => sseClients.delete(res));
   const heartbeat = setInterval(() => { try { res.write(': heartbeat\n\n'); } catch { clearInterval(heartbeat); } }, 30000);
-  req.on('close', () => clearInterval(heartbeat));
+  req.on('close', () => {
+    sseClients.delete(res);
+    clearInterval(heartbeat);
+  });
 });
 
 // 启动

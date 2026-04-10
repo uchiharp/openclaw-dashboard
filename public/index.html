@@ -67,6 +67,9 @@
     <!-- 定时任务 -->
     <div class="border-t border-border p-2">
       <div class="text-xs text-gray-500 px-3 py-1 uppercase tracking-wider">定时任务</div>
+      <template x-if="crons.length === 0">
+        <div class="px-3 py-2 text-xs text-gray-600">暂无定时任务</div>
+      </template>
       <template x-for="cron in crons" :key="cron.id">
         <div class="px-3 py-1.5 text-xs flex items-center gap-2">
           <span :class="cron.state?.lastStatus === 'ok' ? 'text-green-400' : 'text-red-400'"
@@ -133,7 +136,7 @@
                 <span class="w-28 text-sm truncate" x-text="(agent.emoji || '🤖') + ' ' + agent.displayName"></span>
                 <div class="flex-1 bg-gray-700 rounded-full h-2">
                   <div class="h-2 rounded-full transition-all bg-purple-500"
-                       :style="'width: ' + Math.min(agent.diskUsage / (1024*1024), 100) + '%'"></div>
+                       :style="'width: ' + Math.min(agent.diskUsage / Math.max(...agents.map(a => a.diskUsage || 1), 1) * 100, 100) + '%'"></div>
                 </div>
                 <span class="text-xs font-mono w-16 text-right text-gray-400" x-text="formatBytes(agent.diskUsage)"></span>
               </div>
@@ -246,7 +249,7 @@
                     <span class="text-xs text-gray-600 select-none"
                           x-text="expandedSession === session.sessionId ? '▲' : '▼'"
                           @click.stop></span>
-                    <button @click.stop="if(confirm('确定终止会话？\\n' + formatSessionKey(session.sessionKey))) killSession(session.sessionId)"
+                    <button @click.stop="confirmKill(session)"
                             class="text-xs px-2.5 py-1 bg-orange-600/80 hover:bg-orange-500 text-white rounded-md font-medium transition ring-1 ring-orange-400/40"
                       终止
                     </button>
@@ -406,7 +409,7 @@ function dashboard() {
           this.system.gatewayOk = json.data.health?.ok ?? false;
           this.system.authenticated = json.data.authenticated;
         }
-      } catch {}
+      } catch (e) { console.warn('[dashboard] loadSystem failed:', e); }
     },
 
     async loadAll() {
@@ -424,7 +427,7 @@ function dashboard() {
             displayName: AGENT_ALIASES[a.id] || a.name || a.id,
           })).sort((a, b) => b.latestSessionAt - a.latestSessionAt);
         }
-      } catch {}
+      } catch (e) { console.warn('[dashboard] loadAgents failed:', e); }
     },
 
     async loadCron() {
@@ -432,7 +435,7 @@ function dashboard() {
         const res = await fetch('/api/cron');
         const json = await res.json();
         if (json.code === 0) this.crons = json.data;
-      } catch {}
+      } catch (e) { console.warn('[dashboard] loadCron failed:', e); }
     },
 
     async selectAgent(agent) {
@@ -455,7 +458,11 @@ function dashboard() {
         if (err.code === 0) this.errors = err.data;
         const updated = this.agents.find(a => a.id === agentId);
         if (updated) this.selectedAgent = updated;
-      } catch {}
+      } catch (e) { console.warn('[dashboard] refreshAgent failed:', e); }
+    },
+
+    confirmKill(session) {
+      if (confirm('确定终止会话？\n' + this.formatSessionKey(session.sessionKey))) this.killSession(session.sessionId);
     },
 
     async killSession(sessionId) {
@@ -502,7 +509,7 @@ function dashboard() {
     },
 
     pollArchiveStatus(agentId) {
- const timer = setInterval(async () => {
+      const timer = setInterval(async () => {
         try {
           const res = await fetch(`/api/agents/${agentId}/archive-status`);
           const json = await res.json();
@@ -520,7 +527,7 @@ function dashboard() {
               this.toast('归档出错: ' + (latest.error || '未知错误'), 'error');
             }
           }
-        } catch {}
+        } catch (e) { console.warn('[dashboard] pollArchiveStatus failed:', e); }
       }, 3000);
     },
 
@@ -548,7 +555,7 @@ function dashboard() {
           this.archiveInProgress = false;
           this.toast('归档出错: ' + d.error, 'error');
         });
-      } catch {}
+      } catch (e) { console.warn('[dashboard] SSE connect failed:', e); }
     },
 
     toast(message, type = 'info') {
@@ -573,7 +580,7 @@ function dashboard() {
           this.sessionContent = json.data.messages;
           this.sessionContentTotal = json.data.total;
         }
-      } catch {}
+      } catch (e) { console.warn('[dashboard] toggleSessionContent failed:', e); }
       this.sessionContentLoading = false;
     },
 
@@ -585,7 +592,7 @@ function dashboard() {
         if (json.code === 0) {
           this.sessionContent = [...this.sessionContent, ...json.data.messages];
         }
-      } catch {}
+      } catch (e) { console.warn('[dashboard] loadMoreSessionContent failed:', e); }
     },
 
     formatBytes(bytes) {
