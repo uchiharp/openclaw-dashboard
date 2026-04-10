@@ -18,6 +18,7 @@ const BACKUP_DIR = path.join(OPENCLAW_HOME, 'workspace', 'memory', 'sessions');
 
 // Gateway API 配置（用于归档时调用 AI 蒸馏）
 const GATEWAY_URL = process.env.GATEWAY_URL || 'http://localhost:18789';
+// GATEWAY_TOKEN: 从环境变量读取，不硬编码默认值（安全修复 P1）
 const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN || '';
 
 // Token 认证：通过环境变量 DASHBOARD_TOKEN 设置，未设置则不启用认证
@@ -50,6 +51,11 @@ function err(code, message) {
 
 // === 写操作锁 ===
 const inflightOps = new Map();
+
+// 路径安全校验（防止路径遍历攻击）
+const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
+function safeId(val) { return typeof val === 'string' && SAFE_ID_RE.test(val) ? val : null; }
+
 function withLock(key, fn) {
   if (inflightOps.has(key)) return err(42900, 'operation already in progress');
   inflightOps.set(key, true);
@@ -216,6 +222,7 @@ app.get('/api/agents', (req, res) => {
 // 单个 Agent 详情
 app.get('/api/agents/:id', (req, res) => {
   const { id } = req.params;
+  if (!safeId(id)) return res.json(err(40000, 'invalid agent id'));
   const { sessions, quality } = getAgentSessions(id);
   const now = Date.now();
   const withUsage = sessions
@@ -231,7 +238,8 @@ app.get('/api/agents/:id', (req, res) => {
 // Agent 错误日志（修复 Architect P1：优先 Gateway 日志，限制 JSONL 扫描）
 app.get('/api/agents/:id/logs', (req, res) => {
   const { id } = req.params;
-  const limit = parseInt(req.query.limit) || 20;
+  if (!safeId(id)) return res.json(err(40000, 'invalid agent id'));
+  const limit = Math.min(parseInt(req.query.limit) || 20, 200);
   const errors = [];
   const now = Date.now();
 
@@ -286,6 +294,7 @@ app.get('/api/agents/:id/logs', (req, res) => {
 // Agent 磁盘占用（纯 Node.js）
 app.get('/api/agents/:id/disk', (req, res) => {
   const { id } = req.params;
+  if (!safeId(id)) return res.json(err(40000, 'invalid agent id'));
   const sessionsDir = path.join(AGENTS_DIR, id, 'sessions');
   const workspaceDir = path.join(AGENTS_DIR, id, 'workspace');
   const sessionsSize = getCachedDirSize(sessionsDir);
@@ -298,6 +307,7 @@ app.get('/api/agents/:id/disk', (req, res) => {
 // Agent 正在执行的任务
 app.get('/api/agents/:id/running', (req, res) => {
   const { id } = req.params;
+  if (!safeId(id)) return res.json(err(40000, 'invalid agent id'));
   const { sessions } = getAgentSessions(id);
   const now = Date.now();
   const runningTasks = sessions.filter(s => s.status === 'running').map(s => {
@@ -320,8 +330,9 @@ app.get('/api/agents/:id/running', (req, res) => {
 // 读取 Session 对话内容
 app.get('/api/sessions/:sessionId/content', (req, res) => {
   const { sessionId } = req.params;
-  const limit = parseInt(req.query.limit) || 100;
-  const offset = parseInt(req.query.offset) || 0;
+  if (!safeId(sessionId)) return res.json(err(40000, 'invalid session id'));
+  const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
   // 在所有 agent 目录下查找 session
   let agentDirs;
@@ -366,6 +377,7 @@ app.get('/api/sessions/:sessionId/content', (req, res) => {
 // Kill Session
 app.delete('/api/sessions/:sessionId', (req, res) => {
   const { sessionId } = req.params;
+  if (!safeId(sessionId)) return res.json(err(40000, 'invalid session id'));
   const result = withLock(`session-${sessionId}`, () => {
     let agentDirs;
     try { agentDirs = fs.readdirSync(AGENTS_DIR); } catch { return err(50000, 'cannot read agents dir'); }
@@ -401,6 +413,7 @@ app.delete('/api/sessions/:sessionId', (req, res) => {
 // Reset Agent
 app.post('/api/agents/:id/sessions/reset', (req, res) => {
   const { id } = req.params;
+  if (!safeId(id)) return res.json(err(40000, 'invalid agent id'));
   const result = withLock(`reset-${id}`, () => {
     const sj = path.join(AGENTS_DIR, id, 'sessions', 'sessions.json');
     const { data, quality } = safeReadJSON(sj);
@@ -428,6 +441,7 @@ app.post('/api/agents/:id/sessions/reset', (req, res) => {
 // 状态存储在 ~/.openclaw/workspace/dashboard/archive-tasks.json
 app.post('/api/agents/:id/sessions/archive', async (req, res) => {
   const { id } = req.params;
+  if (!safeId(id)) return res.json(err(40000, 'invalid agent id'));
   const lockKey = `archive-${id}`;
   const result = withLock(lockKey, () => {
     // 第一步：读取 session 列表
@@ -649,7 +663,7 @@ app.listen(PORT, '127.0.0.1', () => {
 ║   OpenClaw Agent Dashboard              ║
 ║   http://localhost:${PORT}                 ║
 ║   Auth: ${requiresAuth ? 'ENABLED (token required for writes)' : 'disabled (set DASHBOARD_TOKEN to enable)'}
-${requiresAuth ? `║   Token: ${AUTH_TOKEN}` : '║   (no token set, all local access allowed)'}
+${requiresAuth ? '║   Token: ' + AUTH_TOKEN.slice(0, 4) + '****' : '║   (no token set, all local access allowed)'}
 ╚══════════════════════════════════════════╝
   `);
 });
