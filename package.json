@@ -1,0 +1,12 @@
+{
+  "name": "openclaw-dashboard",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}

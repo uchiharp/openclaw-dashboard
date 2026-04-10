@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenClaw 控制台</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: { colors: { dark: '#0f172a', card: '#1e293b', border: '#334155' } } }
+    }
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', system-ui, sans-serif; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    .fade-in { animation: fadeIn 0.2s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+  </style>
+</head>
+<body class="bg-dark text-gray-200 min-h-screen">
+
+<div x-data="dashboard()" x-init="init()" class="flex h-screen">
+
+  <!-- 左侧边栏 -->
+  <aside class="w-72 bg-card border-r border-border flex flex-col shrink-0">
+    <div class="p-4 border-b border-border">
+      <h1 class="text-lg font-bold flex items-center gap-2">
+        🦞 OpenClaw 控制台
+      </h1>
+      <div class="text-xs text-gray-500 mt-1 flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full" :class="system.gatewayOk ? 'bg-green-500' : 'bg-red-500'"></span>
+        Gateway <span x-text="system.gatewayOk ? '正常' : '异常'"></span>
+        <span class="ml-auto" x-text="refreshCountdown + 's'"></span>
+      </div>
+    </div>
+
+    <!-- Agent 列表 -->
+    <div class="flex-1 overflow-y-auto p-2 space-y-1">
+      <template x-for="agent in agents" :key="agent.id">
+        <button
+          @click="selectAgent(agent)"
+          class="w-full text-left px-3 py-2 rounded-lg transition hover:bg-gray-700/50 flex items-center gap-2"
+          :class="selectedAgent?.id === agent.id ? 'bg-gray-700/70 ring-1 ring-blue-500/50' : ''"
+        >
+          <span class="text-lg" x-text="agent.emoji || '🤖'"></span>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium truncate" x-text="agent.displayName"></div>
+            <div class="text-xs text-gray-500">
+              <span x-text="agent.sessionCount + ' 会话'"></span>
+              <span class="mx-1">·</span>
+              <span :class="agent.running > 0 ? 'text-green-400' : agent.failed > 0 ? 'text-red-400' : 'text-gray-500'"
+                    x-text="agent.running > 0 ? agent.running + ' 运行中' : agent.failed > 0 ? agent.failed + ' 失败' : '空闲'"></span>
+            </div>
+          </div>
+          <div class="text-right">
+            <div class="text-xs font-mono" :class="agent.maxUsage >= 70 ? 'text-red-400' : 'text-gray-400'"
+                 x-text="agent.maxUsage + '%'"></div>
+          </div>
+        </button>
+      </template>
+    </div>
+
+    <!-- 定时任务 -->
+    <div class="border-t border-border p-2">
+      <div class="text-xs text-gray-500 px-3 py-1 uppercase tracking-wider">定时任务</div>
+      <template x-for="cron in crons" :key="cron.id">
+        <div class="px-3 py-1.5 text-xs flex items-center gap-2">
+          <span :class="cron.state?.lastStatus === 'ok' ? 'text-green-400' : 'text-red-400'"
+                x-text="cron.state?.lastStatus === 'ok' ? '✅' : '❌'"></span>
+          <span class="truncate" x-text="cron.name"></span>
+          <span class="ml-auto text-gray-600 text-[10px]" x-text="cron.schedule"></span>
+        </div>
+      </template>
+    </div>
+  </aside>
+
+  <!-- 主内容区 -->
+  <main class="flex-1 overflow-y-auto">
+    <!-- 无选中时显示总览 -->
+    <template x-if="!selectedAgent">
+      <div class="p-6">
+        <h2 class="text-lg font-semibold mb-4">系统总览</h2>
+        <!-- 概览卡片 -->
+        <div class="grid grid-cols-4 gap-4 mb-6">
+          <div class="bg-card rounded-xl p-4 border border-border">
+            <div class="text-2xl font-bold" x-text="agents.length"></div>
+            <div class="text-sm text-gray-500">Agent 数量</div>
+          </div>
+          <div class="bg-card rounded-xl p-4 border border-border">
+            <div class="text-2xl font-bold text-green-400" x-text="agents.reduce((s, a) => s + a.running, 0)"></div>
+            <div class="text-sm text-gray-500">运行中</div>
+          </div>
+          <div class="bg-card rounded-xl p-4 border border-border">
+            <div class="text-2xl font-bold text-red-400" x-text="agents.reduce((s, a) => s + a.failed, 0)"></div>
+            <div class="text-sm text-gray-500">异常</div>
+          </div>
+          <div class="bg-card rounded-xl p-4 border border-border">
+            <div class="text-2xl font-bold text-blue-400" x-text="formatBytes(agents.reduce((s, a) => s + a.diskUsage, 0))"></div>
+            <div class="text-sm text-gray-500">磁盘占用</div>
+          </div>
+        </div>
+
+        <!-- 使用率排行 -->
+        <div class="bg-card rounded-xl p-4 border border-border">
+          <h3 class="text-sm font-semibold mb-3 text-gray-400">Token 使用率（最高会话）</h3>
+          <div class="space-y-2">
+            <template x-for="agent in [...agents].sort((a, b) => b.maxUsage - a.maxUsage).filter(a => a.maxUsage > 0)" :key="agent.id">
+              <div class="flex items-center gap-3">
+                <span class="w-28 text-sm truncate" x-text="(agent.emoji || '🤖') + ' ' + agent.displayName"></span>
+                <div class="flex-1 bg-gray-700 rounded-full h-2">
+                  <div class="h-2 rounded-full transition-all"
+                       :class="agent.maxUsage >= 70 ? 'bg-red-500' : agent.maxUsage >= 40 ? 'bg-yellow-500' : 'bg-green-500'"
+                       :style="'width: ' + Math.min(agent.maxUsage, 100) + '%'"></div>
+                </div>
+                <span class="text-xs font-mono w-10 text-right"
+                      :class="agent.maxUsage >= 70 ? 'text-red-400' : 'text-gray-400'"
+                      x-text="agent.maxUsage + '%'"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- 磁盘占用排行 -->
+        <div class="bg-card rounded-xl p-4 border border-border mt-4">
+          <h3 class="text-sm font-semibold mb-3 text-gray-400">磁盘占用排行</h3>
+          <div class="space-y-2">
+            <template x-for="agent in [...agents].sort((a, b) => b.diskUsage - a.diskUsage).filter(a => a.diskUsage > 0)" :key="agent.id">
+              <div class="flex items-center gap-3">
+                <span class="w-28 text-sm truncate" x-text="(agent.emoji || '🤖') + ' ' + agent.displayName"></span>
+                <div class="flex-1 bg-gray-700 rounded-full h-2">
+                  <div class="h-2 rounded-full transition-all bg-purple-500"
+                       :style="'width: ' + Math.min(agent.diskUsage / (1024*1024), 100) + '%'"></div>
+                </div>
+                <span class="text-xs font-mono w-16 text-right text-gray-400" x-text="formatBytes(agent.diskUsage)"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- 选中 Agent 时显示详情 -->
+    <template x-if="selectedAgent">
+      <div class="p-6 space-y-4 fade-in">
+        <!-- Agent 头部 -->
+        <div class="flex items-center gap-3">
+          <span class="text-3xl" x-text="selectedAgent.emoji || '🤖'"></span>
+          <div>
+            <h2 class="text-xl font-bold" x-text="selectedAgent.displayName"></h2>
+            <div class="text-sm text-gray-500">
+              <span x-text="selectedAgent.id"></span>
+              <span class="mx-2">·</span>
+              <span x-text="formatBytes(selectedAgent.diskUsage)"></span>
+              <span class="mx-2">·</span>
+              <span x-text="agentSessions.length + ' 个会话'"></span>
+              <span x-if="selectedAgent.dataQuality && selectedAgent.dataQuality !== 'ok'"
+                    class="text-yellow-400 ml-2" x-text="'⚠️ 数据异常: ' + selectedAgent.dataQuality"></span>
+            </div>
+          </div>
+          <div class="ml-auto flex gap-2">
+            <button @click="archiveAgent(selectedAgent.id)"
+                    :disabled="archiveInProgress"
+                    class="px-3 py-1.5 text-sm bg-blue-600/20 text-blue-400 rounded-lg hover:bg-blue-600/30 transition disabled:opacity-50"
+                    x-text="archiveInProgress ? '⏳ 蒸馏中...' : '📦 归档会话'">
+            </button>
+            <button @click="resetAgent(selectedAgent.id)"
+                    class="px-3 py-1.5 text-sm bg-red-600/20 text-red-400 rounded-lg hover:bg-red-600/30 transition">
+              🗑 重置所有会话
+            </button>
+            <button @click="refreshAgent(selectedAgent.id)"
+                    class="px-3 py-1.5 text-sm bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition">
+              🔄 刷新
+            </button>
+          </div>
+        </div>
+
+        <!-- 正在运行的任务 -->
+        <template x-if="runningTasks.length > 0">
+          <div class="bg-green-900/20 border border-green-800/50 rounded-xl p-4">
+            <h3 class="text-sm font-semibold text-green-400 mb-2">⚡ 正在执行</h3>
+            <div class="space-y-2">
+              <template x-for="task in runningTasks" :key="task.sessionId">
+                <div class="bg-dark/50 rounded-lg p-3 text-sm">
+                  <div class="text-xs text-gray-500 mb-1" x-text="task.sessionKey?.split(':').slice(-2).join(' → ')"></div>
+                  <template x-for="(action, i) in task.lastActions.slice(-3)" :key="i">
+                    <div class="text-xs py-0.5">
+                      <template x-if="action.type === 'text'">
+                        <span class="text-gray-400" x-text="'📝 ' + action.text.slice(0, 100)"></span>
+                      </template>
+                      <template x-if="action.tool">
+                        <span class="text-blue-300" x-text="'🔧 ' + action.tool + '(' + action.args.slice(0, 80) + ')'"></span>
+                      </template>
+                    </div>
+                  </template>
+                  <div class="text-xs text-gray-600 mt-1" x-text="task.ageMinutes + ' 分钟前 · ' + task.model"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- Session 列表 -->
+        <div class="bg-card rounded-xl border border-border">
+          <div class="p-4 border-b border-border">
+            <h3 class="text-sm font-semibold text-gray-400">会话列表</h3>
+          </div>
+          <div class="divide-y divide-border">
+            <template x-for="session in agentSessions" :key="session.sessionId">
+              <div class="px-4 py-3 flex items-center gap-3 hover:bg-gray-700/30 transition">
+                <div class="w-2 h-2 rounded-full shrink-0"
+                     :class="{
+                       'bg-green-400 animate-pulse': session.status === 'running',
+                       'bg-gray-500': session.status === 'done',
+                       'bg-red-400': session.status === 'failed',
+                       'bg-yellow-400': ['timeout', 'unknown'].includes(session.status)
+                     }"></div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm truncate" x-text="formatSessionKey(session.sessionKey)"></div>
+                  <div class="text-xs text-gray-500" x-text="session.model + ' · ' + session.ageMinutes + ' 分钟前'"></div>
+                </div>
+                <div class="flex items-center gap-3">
+                  <div class="flex items-center gap-1.5">
+                    <div class="w-16 bg-gray-700 rounded-full h-1.5">
+                      <div class="h-1.5 rounded-full"
+                           :class="session.usage >= 70 ? 'bg-red-500' : session.usage >= 40 ? 'bg-yellow-500' : 'bg-green-500'"
+                           :style="'width: ' + Math.min(session.usage, 100) + '%'"></div>
+                    </div>
+                    <span class="text-xs font-mono w-8 text-right"
+                          :class="session.usage >= 70 ? 'text-red-400' : 'text-gray-400'"
+                          x-text="session.usage + '%'"></span>
+                  </div>
+                  <span class="text-xs text-gray-500 w-20 text-right" x-text="formatTokens(session.totalTokens)"></span>
+                  <button @click="if(confirm('确定终止会话？\\n' + formatSessionKey(session.sessionKey))) killSession(session.sessionId)"
+                          class="text-xs px-2 py-1 bg-red-600/20 text-red-400 rounded hover:bg-red-600/30 transition">
+                    终止
+                  </button>
+                </div>
+              </div>
+            </template>
+            <template x-if="agentSessions.length === 0">
+              <div class="px-4 py-8 text-center text-gray-600 text-sm">暂无会话</div>
+            </template>
+          </div>
+        </div>
+
+        <!-- 错误日志 -->
+        <div class="bg-card rounded-xl border border-border">
+          <div class="p-4 border-b border-border flex items-center">
+            <h3 class="text-sm font-semibold text-gray-400">错误日志</h3>
+            <span x-show="errors.length === 0" class="text-xs text-gray-600 ml-2">✅ 无错误</span>
+          </div>
+          <template x-if="errors.length > 0">
+            <div class="divide-y divide-border max-h-64 overflow-y-auto">
+              <template x-for="(err, i) in errors" :key="i">
+                <div class="px-4 py-2 text-sm">
+                  <div class="flex items-center gap-2 text-xs text-gray-500 mb-1">
+                    <span x-text="(err.ageMinutes || 0) + ' 分钟前'"></span>
+                    <span class="text-gray-600" x-text="err.source === 'gateway-log' ? '系统日志' : err.sessionKey?.split(':').pop()"></span>
+                  </div>
+                  <div class="text-red-300 text-xs font-mono break-all" x-text="err.error || err.snippet"></div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+  </main>
+</div>
+
+<!-- Toast -->
+<div class="fixed bottom-4 right-4 space-y-2 z-50">
+  <template x-for="(toast, i) in toasts" :key="toast.id">
+    <div class="px-4 py-2 rounded-lg shadow-lg text-sm fade-in"
+         :class="toast.type === 'error' ? 'bg-red-900 text-red-200' : toast.type === 'success' ? 'bg-green-900 text-green-200' : 'bg-card text-gray-200 border border-border'">
+      <span x-text="toast.message"></span>
+    </div>
+  </template>
+</div>
+
+<script>
+// Agent 中文名映射（从配置文件动态加载）
+const AGENT_ALIASES = {
+  'main': '🦞 主控',
+  'learn': '🔍 学习搭子',
+  'fit-buddy': '💪 减肥搭子',
+  'chendeng': '🐟 陈登',
+  'zhangmiao': '🎭 张邈',
+  'startup-helper': '🚀 创业助手',
+  'pm': '📋 产品经理',
+  'qa': '🧪 质量保证',
+  'ux-tester': '👤 用户体验',
+  'architect': '🏗️ 架构师',
+  'cron-reporter': '📊 报告员',
+  'frontend': '🎨 前端',
+  'backend': '⚙️ 后端',
+  'ui-designer': '🎨 设计师',
+  'glm-5': '🤖 GLM-5',
+};
+
+function dashboard() {
+  return {
+    agents: [],
+    selectedAgent: null,
+    agentSessions: [],
+    runningTasks: [],
+    errors: [],
+    crons: [],
+    system: { gatewayOk: false },
+    toasts: [],
+    refreshCountdown: 30,
+    archiveInProgress: false,
+
+    async init() {
+      await this.loadSystem();
+      await this.loadAll();
+      this.connectSSE();
+      setInterval(() => {
+        this.refreshCountdown--;
+        if (this.refreshCountdown <= 0) {
+          this.refreshCountdown = 30;
+          this.loadAll();
+        }
+      }, 1000);
+    },
+
+    async loadSystem() {
+      try {
+        const res = await fetch('/api/system');
+        const json = await res.json();
+        if (json.code === 0) {
+          this.system.gatewayOk = json.data.health?.ok ?? false;
+          this.system.authenticated = json.data.authenticated;
+        }
+      } catch {}
+    },
+
+    async loadAll() {
+      await Promise.all([this.loadAgents(), this.loadCron()]);
+      if (this.selectedAgent) await this.refreshAgent(this.selectedAgent.id);
+    },
+
+    async loadAgents() {
+      try {
+        const res = await fetch('/api/agents');
+        const json = await res.json();
+        if (json.code === 0) {
+          this.agents = json.data.map(a => ({
+            ...a,
+            displayName: AGENT_ALIASES[a.id] || a.name || a.id,
+          }));
+        }
+      } catch {}
+    },
+
+    async loadCron() {
+      try {
+        const res = await fetch('/api/cron');
+        const json = await res.json();
+        if (json.code === 0) this.crons = json.data;
+      } catch {}
+    },
+
+    async selectAgent(agent) {
+      this.selectedAgent = agent;
+      await this.refreshAgent(agent.id);
+    },
+
+    async refreshAgent(agentId) {
+      try {
+        const [sessRes, runRes, errRes] = await Promise.all([
+          fetch(`/api/agents/${agentId}`),
+          fetch(`/api/agents/${agentId}/running`),
+          fetch(`/api/agents/${agentId}/logs`),
+        ]);
+        const sess = await sessRes.json();
+        const run = await runRes.json();
+        const err = await errRes.json();
+        if (sess.code === 0) this.agentSessions = sess.data.sessions;
+        if (run.code === 0) this.runningTasks = run.data;
+        if (err.code === 0) this.errors = err.data;
+        const updated = this.agents.find(a => a.id === agentId);
+        if (updated) this.selectedAgent = updated;
+      } catch {}
+    },
+
+    async killSession(sessionId) {
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (json.code === 0) {
+          this.toast('会话已终止', 'success');
+          await this.refreshAgent(this.selectedAgent.id);
+          await this.loadAgents();
+        } else {
+          this.toast(json.message, 'error');
+        }
+      } catch (e) { this.toast('操作失败: ' + e.message, 'error'); }
+    },
+
+    async resetAgent(agentId) {
+      const name = this.selectedAgent?.displayName || agentId;
+      if (!confirm(`确定要重置 ${name} 的所有会话？\n此操作不可撤销。`)) return;
+      try {
+        const res = await fetch(`/api/agents/${agentId}/sessions/reset`, { method: 'POST' });
+        const json = await res.json();
+        if (json.code === 0) {
+          this.toast(`已重置 ${json.data.deletedSessions} 个会话`, 'success');
+          this.selectedAgent = null;
+          await this.loadAgents();
+        } else { this.toast(json.message, 'error'); }
+      } catch (e) { this.toast('操作失败: ' + e.message, 'error'); }
+    },
+
+    async archiveAgent(agentId) {
+      const name = this.selectedAgent?.displayName || agentId;
+      if (!confirm(`归档 ${name} 的会话？\n会先备份对话，再由 AI 蒸馏摘要，最后清理文件。\n此过程可能需要几十秒。`)) return;
+      this.archiveInProgress = true;
+      try {
+        const res = await fetch(`/api/agents/${agentId}/sessions/archive`, { method: 'POST' });
+        const json = await res.json();
+        if (json.code === 0) {
+          this.toast(json.data.message, 'info');
+          // 轮询归档状态
+          this.pollArchiveStatus(agentId);
+        } else { this.toast(json.message, 'error'); this.archiveInProgress = false; }
+      } catch (e) { this.toast('归档失败: ' + e.message, 'error'); this.archiveInProgress = false; }
+    },
+
+    pollArchiveStatus(agentId) {
+ const timer = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/agents/${agentId}/archive-status`);
+          const json = await res.json();
+          if (json.code === 0 && json.data.length > 0) {
+            const latest = json.data[0];
+            if (latest.status === 'done') {
+              clearInterval(timer);
+              this.archiveInProgress = false;
+              this.toast(`归档完成：${latest.archived?.length || 0} 个会话已归档`, 'success');
+              await this.refreshAgent(agentId);
+              await this.loadAgents();
+            } else if (latest.status === 'error') {
+              clearInterval(timer);
+              this.archiveInProgress = false;
+              this.toast('归档出错: ' + (latest.error || '未知错误'), 'error');
+            }
+          }
+        } catch {}
+      }, 3000);
+    },
+
+    connectSSE() {
+      try {
+        const es = new EventSource('/api/events');
+        es.addEventListener('session-killed', () => {
+          this.toast('会话已终止', 'success');
+          this.refreshCountdown = 30;
+          this.loadAll();
+        });
+        es.addEventListener('agent-reset', () => {
+          this.toast('Agent 已重置', 'success');
+          this.selectedAgent = null;
+          this.loadAll();
+        });
+        es.addEventListener('archive-complete', (e) => {
+          const d = JSON.parse(e.data);
+          this.archiveInProgress = false;
+          this.toast(`归档完成：${d.archived} 个成功，${d.failed} 个失败`, 'success');
+          this.loadAll();
+        });
+        es.addEventListener('archive-error', (e) => {
+          const d = JSON.parse(e.data);
+          this.archiveInProgress = false;
+          this.toast('归档出错: ' + d.error, 'error');
+        });
+      } catch {}
+    },
+
+    toast(message, type = 'info') {
+      const id = Date.now();
+      this.toasts.push({ id, message, type });
+      setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 3000);
+    },
+
+    formatBytes(bytes) {
+      if (!bytes) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let i = 0;
+      while (bytes >= 1024 && i < units.length - 1) { bytes /= 1024; i++; }
+      return bytes.toFixed(1) + ' ' + units[i];
+    },
+
+    formatTokens(tokens) {
+      if (!tokens) return '0';
+      if (tokens >= 1000) return (tokens / 1000).toFixed(0) + 'k';
+      return tokens.toString();
+    },
+
+    formatSessionKey(key) {
+      if (!key) return '';
+      const parts = key.split(':');
+      // 取最后两部分，格式化显示
+      const agent = parts.find(p => ['feishu', 'webchat', 'whatsapp'].includes(p));
+      const type = parts[parts.length - 2];
+      const id = parts[parts.length - 1];
+      if (type === 'direct') return `私信 → ${id.slice(0, 8)}...`;
+      if (type === 'main') return '主会话';
+      if (type === 'cron') return `定时任务 → ${id.slice(0, 8)}...`;
+      if (type === 'subagent') return `子任务 → ${id.slice(0, 8)}...`;
+      return key;
+    },
+  };
+}
+</script>
+
+</body>
+</html>
