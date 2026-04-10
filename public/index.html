@@ -421,7 +421,7 @@ function dashboard() {
           this.agents = json.data.map(a => ({
             ...a,
             displayName: AGENT_ALIASES[a.id] || a.name || a.id,
-          }));
+          })).sort((a, b) => b.latestSessionAt - a.latestSessionAt);
         }
       } catch {}
     },

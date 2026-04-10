@@ -197,11 +197,13 @@ app.get('/api/agents', (req, res) => {
       return pct > max ? pct : max;
     }, 0);
 
+    const latestSessionAt = sessions.reduce((max, s) => Math.max(max, s.updatedAt || 0), 0);
     return {
       id, name: identity.name || id, emoji: identity.emoji || '🤖',
       dataQuality: quality, sessionCount: sessions.length,
       running, done, failed, totalTokens, maxUsage,
       diskUsage: getCachedDirSize(path.join(AGENTS_DIR, id, 'sessions')),
+      latestSessionAt,
     };
   });
 
