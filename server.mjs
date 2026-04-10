@@ -20,6 +20,10 @@ const BACKUP_DIR = path.join(OPENCLAW_HOME, 'workspace', 'memory', 'sessions');
 const GATEWAY_URL = process.env.GATEWAY_URL || 'http://localhost:18789';
 // GATEWAY_TOKEN: 从环境变量读取，不硬编码默认值（安全修复 P1）
 const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN || '';
+// 蒸馏用的 agent（默认自动检测第一个可用 agent）
+const DISTILL_AGENT = process.env.DISTILL_AGENT || '';
+// 蒸馏后是否存入 MemPalace（默认关闭，需要 Gateway + MemPalace MCP 配置）
+const DISTILL_TO_MEMPALACE = process.env.DISTILL_TO_MEMPALACE === '1' || process.env.DISTILL_TO_MEMPALACE === 'true';
 
 // Token 认证：通过环境变量 DASHBOARD_TOKEN 设置，未设置则不启用认证
 // 启动时打印到终端，不通过 API 暴露（修复 QA P0：token 泄露）
@@ -522,14 +526,26 @@ app.post('/api/agents/:id/sessions/archive', async (req, res) => {
 
           // 通过 openclaw agent CLI 调用 AI 蒸馏
           let summary = dialogContent.slice(0, 500); // 默认降级
+          let distillAgent = DISTILL_AGENT;
           try {
+            // 如果没有配置蒸馏 agent，自动检测第一个可用的
+            if (!distillAgent) {
+              const agentsDirs = fs.readdirSync(AGENTS_DIR, { withFileTypes: true })
+                .filter(d => d.isDirectory() && fs.existsSync(path.join(AGENTS_DIR, d.name, 'AGENTS.md')));
+              if (agentsDirs.length > 0) distillAgent = agentsDirs[0].name;
+            }
+
             const distillPrompt = `请将以下对话蒸馏为不超过300字的摘要。只保留关键决策、重要结论和待办事项，去掉闲聊和重复内容。直接输出摘要，不要加任何前缀。\n\n---\n${dialogContent.slice(0, 8000)}`;
-            // 用 execSync 同步调用（在 async 块中可以 wrap）
-            const result = execSync(`openclaw agent --agent learn --message ${JSON.stringify(distillPrompt)}`, {
-                timeout: 60000, encoding: 'utf-8', shell: true
-              }).trim();
-            if (result && result.length > 10) {
-              summary = result.slice(0, 1000);
+
+            if (distillAgent) {
+              const result = execSync(`openclaw agent --agent ${distillAgent} --message ${JSON.stringify(distillPrompt)}`, {
+                  timeout: 60000, encoding: 'utf-8', shell: true
+                }).trim();
+              if (result && result.length > 10) {
+                summary = result.slice(0, 1000);
+              }
+            } else {
+              console.log('[archive] no available agent found for distillation, using text truncation');
             }
           } catch (e) {
             // 蒸馏失败，使用简单截取作为降级
@@ -538,8 +554,38 @@ app.post('/api/agents/:id/sessions/archive', async (req, res) => {
 
           // 存储摘要文件
           const summaryFile = path.join(backupDir, `${s.sid}.summary.md`);
-          const summaryText = `# ${id} 会话摘要\n\n**Session:** ${s.sid}\n**时间:** ${s.meta.updatedAt ? new Date(s.meta.updatedAt).toLocaleString('zh-CN') : '未知'}\n**状态:** ${s.status}\n**使用率:** ${s.usage}%\n\n## 摘要\n\n${summary}\n\n---\n*归档时间: ${new Date().toISOString()}*\n*由 Dashboard AI 蒸馏归档*`;
+          const summaryText = `# ${id} 会话摘要\n\n**Session:** ${s.sid}\n**时间:** ${s.meta.updatedAt ? new Date(s.meta.updatedAt).toLocaleString('zh-CN') : '未知'}\n**状态:** ${s.status}\n**使用率:** ${s.usage}%\n\n## 摘要\n\n${summary}\n\n---\n*归档时间: ${new Date().toISOString()}*\n*由 Dashboard AI 蒸馏归档${distillAgent ? ' (agent: ' + distillAgent + ')' : ''}*`;
           fs.writeFileSync(summaryFile, summaryText);
+
+          // 存入 MemPalace（如果启用）
+          if (DISTILL_TO_MEMPALACE && GATEWAY_TOKEN) {
+            try {
+              const resp = await fetch(`${GATEWAY_URL}/api/mcp`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(GATEWAY_TOKEN ? { 'Authorization': `Bearer ${GATEWAY_TOKEN}` } : {})
+                },
+                body: JSON.stringify({
+                  tool: 'mempalace__mempalace_add_drawer',
+                  arguments: {
+                    wing: `agent-${id}`,
+                    room: 'archived-sessions',
+                    content: summaryText,
+                    source_file: `sessions/${id}/${s.sid}.jsonl`
+                  }
+                }),
+                signal: AbortSignal.timeout(30000)
+              });
+              if (resp.ok) {
+                console.log(`[archive] saved to MemPalace: ${s.sid}`);
+              } else {
+                console.log(`[archive] MemPalace save failed: ${resp.status}`);
+              }
+            } catch (e) {
+              console.log(`[archive] MemPalace save error: ${e.message.slice(0, 100)}`);
+            }
+          }
           archived.push(s.sid);
         }
 
@@ -643,8 +689,14 @@ app.get('/api/channels', (req, res) => {
 });
 
 // MemPalace
-app.get('/api/mempalace', (req, res) => {
-  res.json(ok({ available: false, note: 'MemPalace 是独立 MCP 服务，需要通过 Gateway 工具调用。' }));
+app.get('/api/mempalace', async (req, res) => {
+  try {
+    const headers = GATEWAY_TOKEN ? { 'Authorization': `Bearer ${GATEWAY_TOKEN}` } : {};
+    const resp = await fetch(`${GATEWAY_URL}/api/mcp`, { headers, signal: AbortSignal.timeout(5000) });
+    res.json(ok({ available: true, gateway: GATEWAY_URL }));
+  } catch {
+    res.json(ok({ available: false, note: '无法连接到 Gateway，MemPalace 不可用' }));
+  }
 });
 
 // SSE 实时推送
