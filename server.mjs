@@ -197,7 +197,10 @@ app.get('/api/agents', (req, res) => {
       return pct > max ? pct : max;
     }, 0);
 
-    const latestSessionAt = sessions.reduce((max, s) => Math.max(max, s.updatedAt || 0), 0);
+    const latestSessionAt = sessions.reduce((max, s) => {
+      const t = typeof s.updatedAt === 'number' ? s.updatedAt : (s.updatedAt ? new Date(s.updatedAt).getTime() || 0 : 0);
+      return t > max ? t : max;
+    }, 0);
     return {
       id, name: identity.name || id, emoji: identity.emoji || '🤖',
       dataQuality: quality, sessionCount: sessions.length,
@@ -207,7 +210,7 @@ app.get('/api/agents', (req, res) => {
     };
   });
 
-  res.json(ok(result));
+  res.json(ok(result.sort((a, b) => b.latestSessionAt - a.latestSessionAt)));
 });
 
 // 单个 Agent 详情

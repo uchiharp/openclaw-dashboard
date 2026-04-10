@@ -292,7 +292,7 @@
                         <template x-if="sessionContentTotal > sessionContent.length">
                           <div class="text-center">
                             <button @click.stop="loadMoreSessionContent()"
-                                    class="text-xs text-blue-400 hover:text-blue-300 px-3 py-1 rounded border border-blue-400/30 hover:border-blue-400/60"
+                                    class="text-xs text-blue-400 hover:text-blue-300 px-3 py-1 rounded ring-1 ring-blue-400/25 hover:ring-blue-400/50 transition"
                                     x-text="'加载更早的对话（还有 ' + (sessionContentTotal - sessionContent.length) + ' 条）'">
                             </button>
                           </div>
