@@ -208,10 +208,10 @@
           <div class="p-4 border-b border-border flex items-center justify-between">
             <h3 class="text-sm font-semibold text-gray-400">会话列表</h3>
             <div class="flex items-center gap-3 text-[10px] text-gray-600">
-              <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-400"></span>运行中</span>
-              <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-gray-500"></span>已完成</span>
+              <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-yellow-400"></span>运行中</span>
+              <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-400"></span>已完成</span>
               <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-400"></span>失败</span>
-              <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-yellow-400"></span>超时/未知</span>
+              <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-orange-400"></span>超时/未知</span>
             </div>
           </div>
           <div class="divide-y divide-border">
@@ -221,10 +221,10 @@
                      @click="toggleSessionContent(session)">
                   <div class="w-2 h-2 rounded-full shrink-0"
                        :class="{
-                         'bg-green-400 animate-pulse': session.status === 'running',
-                         'bg-gray-500': session.status === 'done',
+                         'bg-yellow-400 animate-pulse': session.status === 'running',
+                         'bg-green-500': session.status === 'done',
                          'bg-red-400': session.status === 'failed',
-                         'bg-yellow-400': ['timeout', 'unknown'].includes(session.status)
+                         'bg-orange-400': ['timeout', 'unknown'].includes(session.status)
                        }"></div>
                   <div class="flex-1 min-w-0">
                     <div class="text-sm truncate" x-text="formatSessionKey(session.sessionKey)"></div>
