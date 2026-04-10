@@ -20,10 +20,104 @@ const BACKUP_DIR = path.join(OPENCLAW_HOME, 'workspace', 'memory', 'sessions');
 const GATEWAY_URL = process.env.GATEWAY_URL || 'http://localhost:18789';
 // GATEWAY_TOKEN: 从环境变量读取，不硬编码默认值（安全修复 P1）
 const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN || '';
-// 蒸馏用的 agent（默认自动检测第一个可用 agent）
 const DISTILL_AGENT = process.env.DISTILL_AGENT || '';
-// 蒸馏后是否存入 MemPalace（默认关闭，需要 Gateway + MemPalace MCP 配置）
-const DISTILL_TO_MEMPALACE = process.env.DISTILL_TO_MEMPALACE === '1' || process.env.DISTILL_TO_MEMPALACE === 'true';
+
+// Gateway MCP 调用封装
+async function gatewayMCP(tool, args, timeoutMs = 30000) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (GATEWAY_TOKEN) headers['Authorization'] = `Bearer ${GATEWAY_TOKEN}`;
+  const resp = await fetch(`${GATEWAY_URL}/api/mcp`, {
+    method: 'POST', headers,
+    body: JSON.stringify({ tool, arguments: args }),
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  if (!resp.ok) throw new Error(`Gateway MCP ${resp.status}`);
+  return resp.json();
+}
+
+// 检测 MemPalace 是否可用
+let _mempalaceAvailable = null;
+async function isMemPalaceAvailable() {
+  if (_mempalaceAvailable !== null) return _mempalaceAvailable;
+  try {
+    await gatewayMCP('mempalace__mempalace_status', {});
+    _mempalaceAvailable = true;
+    console.log('[archive] MemPalace available via Gateway MCP');
+  } catch {
+    _mempalaceAvailable = false;
+    console.log('[archive] MemPalace not available, using local distillation');
+  }
+  return _mempalaceAvailable;
+}
+
+// 检测/创建 session-janitor skill
+const JANITOR_SKILL_DIR = path.join(OPENCLAW_HOME, 'workspace', 'skills', 'session-janitor');
+function ensureJanitorSkill() {
+  if (fs.existsSync(path.join(JANITOR_SKILL_DIR, 'SKILL.md'))) return true;
+  console.log('[archive] session-janitor skill not found, creating...');
+  const skillContent = `# Session Janitor - 每小时 Session 清理
+
+当此 skill 被 cron 触发时，按以下流程执行。
+
+## 执行流程
+
+### 第一步：收集所有 agent 的 session 状态
+
+1. 用 sessions_list 获取活跃 session（activeMinutes=120）
+2. 用 exec 扫描 ~/.openclaw/agents/*/sessions/sessions.json，获取全量 session 数据
+3. 对每个 session 计算使用率：totalTokens / contextTokens（contextTokens 为 0 则跳过）
+
+### 第二步：检查是否需要清理
+
+对每个 session 判断：
+- status = running → **跳过**
+- updatedAt 距现在 < 5 分钟（用户正在活跃）→ **跳过**
+- 使用率 < 70% → **跳过**
+- kind 包含 subagent → **跳过**（子 agent 由第四步统一处理）
+- 使用率 ≥ 70% 且 status = done/failed → **触发清理**
+
+### 第三步：执行 Session 清理
+
+对触发清理的 session：
+1. 用 sessions_history 获取对话内容（includeTools=false）
+2. 过滤内容：保留 role=assistant 的文本回复和 role=user 的关键指令
+3. 蒸馏为要点摘要（不超过 500 字）
+4. 用 mempalace_check_duplicate 检查是否已存在相似内容（threshold=0.85）
+5. 如果不重复，用 mempalace_add_drawer 存入：
+   - wing: session-memory-{agentId}
+   - room: cleaned-sessions
+   - content: 包含 agentId、session 时间范围、蒸馏摘要
+6. 备份 transcript 到 ~/.openclaw/workspace/memory/sessions/{agentId}/{sessionId}.bak
+7. 删除 .jsonl 文件
+8. 从 sessions.json 中删除对应条目
+
+### 第四步：清理孤儿子 agent
+
+1. 找出 kind 包含 subagent 且 status = done/failed 且 updatedAt 超过 1 小时的 session
+2. 删除对应的 .jsonl 文件和 sessions.json 条目
+
+### 第五步：报告
+
+- 执行了清理 → 发送报告（清理了哪些 session、释放了多少 token）
+- 没有清理 → 不发消息
+- 有异常 → 立即报告，包含错误详情
+
+## 注意事项
+- running 的 session 绝对不碰
+- 用户最近活跃的 session 绝对不碰
+- 文件删除用 trash 命令（如果可用），否则用 rm
+- sessions.json 操作用 python3 确保原子性
+`;
+  try {
+    fs.mkdirSync(JANITOR_SKILL_DIR, { recursive: true });
+    fs.writeFileSync(path.join(JANITOR_SKILL_DIR, 'SKILL.md'), skillContent);
+    console.log('[archive] session-janitor skill created at', JANITOR_SKILL_DIR);
+    return true;
+  } catch (e) {
+    console.log('[archive] failed to create session-janitor skill:', e.message);
+    return false;
+  }
+}
 
 // Token 认证：通过环境变量 DASHBOARD_TOKEN 设置，未设置则不启用认证
 // 启动时打印到终端，不通过 API 暴露（修复 QA P0：token 泄露）
@@ -557,34 +651,31 @@ app.post('/api/agents/:id/sessions/archive', async (req, res) => {
           const summaryText = `# ${id} 会话摘要\n\n**Session:** ${s.sid}\n**时间:** ${s.meta.updatedAt ? new Date(s.meta.updatedAt).toLocaleString('zh-CN') : '未知'}\n**状态:** ${s.status}\n**使用率:** ${s.usage}%\n\n## 摘要\n\n${summary}\n\n---\n*归档时间: ${new Date().toISOString()}*\n*由 Dashboard AI 蒸馏归档${distillAgent ? ' (agent: ' + distillAgent + ')' : ''}*`;
           fs.writeFileSync(summaryFile, summaryText);
 
-          // 存入 MemPalace（如果启用）
-          if (DISTILL_TO_MEMPALACE && GATEWAY_TOKEN) {
+          // 智能蒸馏存储：MemPalace > 本地文件
+          if (await isMemPalaceAvailable()) {
+            ensureJanitorSkill();
             try {
-              const resp = await fetch(`${GATEWAY_URL}/api/mcp`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  ...(GATEWAY_TOKEN ? { 'Authorization': `Bearer ${GATEWAY_TOKEN}` } : {})
-                },
-                body: JSON.stringify({
-                  tool: 'mempalace__mempalace_add_drawer',
-                  arguments: {
-                    wing: `agent-${id}`,
-                    room: 'archived-sessions',
-                    content: summaryText,
-                    source_file: `sessions/${id}/${s.sid}.jsonl`
-                  }
-                }),
-                signal: AbortSignal.timeout(30000)
+              // 先检查是否已存在相似内容
+              const dupCheck = await gatewayMCP('mempalace__mempalace_check_duplicate', {
+                content: summaryText.slice(0, 2000),
+                threshold: 0.85
               });
-              if (resp.ok) {
-                console.log(`[archive] saved to MemPalace: ${s.sid}`);
+              if (dupCheck.isDuplicate) {
+                console.log(`[archive] duplicate summary for ${s.sid}, skipping MemPalace`);
               } else {
-                console.log(`[archive] MemPalace save failed: ${resp.status}`);
+                await gatewayMCP('mempalace__mempalace_add_drawer', {
+                  wing: `session-memory-${id}`,
+                  room: 'archived-sessions',
+                  content: summaryText,
+                  source_file: `dashboard-archive/${id}/${s.sid}.jsonl`
+                });
+                console.log(`[archive] saved to MemPalace: ${s.sid}`);
               }
             } catch (e) {
-              console.log(`[archive] MemPalace save error: ${e.message.slice(0, 100)}`);
+              console.log(`[archive] MemPalace save error for ${s.sid}: ${e.message.slice(0, 100)}`);
             }
+          } else {
+            console.log(`[archive] local-only mode, summary saved to ${summaryFile}`);
           }
           archived.push(s.sid);
         }

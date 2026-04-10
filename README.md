@@ -51,8 +51,7 @@ npm run dev
 | `DASHBOARD_PORT` | `18790` | 监听端口 |
 | `DASHBOARD_TOKEN` | (无) | 设置后启用写操作认证（GET 不强制） |
 | `DISTILL_AGENT` | (自动检测) | 归档蒸馏用的 agent，默认取第一个可用 agent |
-| `DISTILL_TO_MEMPALACE` | `false` | 设为 `1` 或 `true` 启用蒸馏后存入 MemPalace |
-| `GATEWAY_TOKEN` | (无) | Gateway API token，MemPalace 功能需要 |
+| `GATEWAY_TOKEN` | (无) | Gateway API token，MemPalace 自动存储需要 |
 
 启动时认证：
 
