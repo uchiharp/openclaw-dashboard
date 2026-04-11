@@ -797,6 +797,93 @@ app.get('/api/channels', (req, res) => {
   res.json(ok(channels));
 });
 
+// 飞书用户名缓存：优先飞书 API 查询，fallback 日志提取
+const FEISHU_USER_CACHE = new Map(); // open_id -> name
+let FEISHU_USER_CACHE_LOADED = false;
+
+async function getFeishuToken() {
+  const { data: config } = safeReadJSON(CONFIG_PATH);
+  const accounts = config?.channels?.feishu?.accounts || {};
+  const [appId, account] = Object.entries(accounts).find(([k]) => k !== 'default') || [];
+  if (!account) return null;
+  try {
+    const resp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app_id: account.appId, app_secret: account.appSecret }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = await resp.json();
+    return data.code === 0 ? data.tenant_access_token : null;
+  } catch { return null; }
+}
+
+async function loadFeishuUsersFromAPI() {
+  const token = await getFeishuToken();
+  if (!token) return;
+  try {
+    let pageToken = null;
+    do {
+      let url = 'https://open.feishu.cn/open-apis/contact/v3/users?user_id_type=open_id&department_id=0&page_size=50';
+      if (pageToken) url += `&page_token=${pageToken}`;
+      const resp = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${token}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = await resp.json();
+      for (const u of (data.data?.items || [])) {
+        if (u.open_id && u.name) FEISHU_USER_CACHE.set(u.open_id, u.name);
+      }
+      pageToken = data.data?.has_more ? data.data?.page_token : null;
+    } while (pageToken);
+    console.log(`[dashboard] feishu API: loaded ${FEISHU_USER_CACHE.size} users`);
+  } catch (e) { console.warn('[dashboard] feishu API failed:', e.message); }
+}
+
+function extractUserNamesFromLogs() {
+  try {
+    const agentDirs = fs.readdirSync(AGENTS_DIR);
+    for (const agentId of agentDirs) {
+      const sessionsDir = path.join(AGENTS_DIR, agentId, 'sessions');
+      if (!fs.existsSync(sessionsDir)) continue;
+      for (const jsonlFile of fs.readdirSync(sessionsDir).filter(f => f.endsWith('.jsonl'))) {
+        try {
+          const lines = fs.readFileSync(path.join(sessionsDir, jsonlFile), 'utf-8').split('\n').slice(0, 30);
+          for (const line of lines) {
+            if (!line || !line.includes('ou_')) continue;
+            const sidMatch = line.match(/sender_id[^0-9a-z]*(ou_[a-f0-9]+)/);
+            const nameMatch = line.match(/name\\"[^;]*\\"([^\\]+?)\\"/);
+            const senderMatch = line.match(/sender\\"[^;]*\\"([^\\]+?)\\"/);
+            const name = nameMatch?.[1] || senderMatch?.[1];
+            const idMatch = line.match(/id\\"[^;]*\\"(ou_[a-f0-9]+)\\"/);
+            if (sidMatch && name) FEISHU_USER_CACHE.set(sidMatch[1], name);
+            if (idMatch && name) FEISHU_USER_CACHE.set(idMatch[1], name);
+          }
+        } catch { /* skip */ }
+      }
+    }
+    console.log(`[dashboard] logs: total ${FEISHU_USER_CACHE.size} users cached`);
+  } catch (e) { console.warn('[dashboard] log extraction failed:', e.message); }
+}
+
+async function loadFeishuUsers() {
+  if (FEISHU_USER_CACHE_LOADED) return;
+  await loadFeishuUsersFromAPI();
+  extractUserNamesFromLogs(); // 补充 API 查不到的
+  FEISHU_USER_CACHE_LOADED = true;
+}
+
+// 提供用户名查询 API
+app.get('/api/feishu/users', async (req, res) => {
+  await loadFeishuUsers();
+  const ids = (req.query.ids || '').split(',').filter(Boolean);
+  const names = {};
+  for (const id of ids) {
+    if (FEISHU_USER_CACHE.has(id)) names[id] = FEISHU_USER_CACHE.get(id);
+  }
+  res.json(ok(names));
+});
+
 // MemPalace
 app.get('/api/mempalace', async (req, res) => {
   try {

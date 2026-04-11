@@ -352,24 +352,7 @@
 </div>
 
 <script>
-// Agent 中文名映射（从配置文件动态加载）
-const AGENT_ALIASES = {
-  'main': '🦞 主控',
-  'learn': '🔍 学习搭子',
-  'fit-buddy': '💪 减肥搭子',
-  'chendeng': '🐟 陈登',
-  'zhangmiao': '🎭 张邈',
-  'startup-helper': '🚀 创业助手',
-  'pm': '📋 产品经理',
-  'qa': '🧪 质量保证',
-  'ux-tester': '👤 用户体验',
-  'architect': '🏗️ 架构师',
-  'cron-reporter': '📊 报告员',
-  'frontend': '🎨 前端',
-  'backend': '⚙️ 后端',
-  'ui-designer': '🎨 设计师',
-  'glm-5': '🤖 GLM-5',
-};
+// Agent 名字统一从后端 openclaw.json 的 identity.name 读取，不再前端硬编码
 
 function dashboard() {
   return {
@@ -424,7 +407,7 @@ function dashboard() {
         if (json.code === 0) {
           this.agents = json.data.map(a => ({
             ...a,
-            displayName: AGENT_ALIASES[a.id] || a.name || a.id,
+            displayName: a.name || a.id,
           })).sort((a, b) => b.latestSessionAt - a.latestSessionAt);
         }
       } catch (e) { console.warn('[dashboard] loadAgents failed:', e); }
@@ -456,6 +439,11 @@ function dashboard() {
         if (sess.code === 0) this.agentSessions = sess.data.sessions;
         if (run.code === 0) this.runningTasks = run.data;
         if (err.code === 0) this.errors = err.data;
+        // 异步解析飞书用户名（不阻塞渲染）
+        if (sess.code === 0 && sess.data.sessions) {
+          const keys = sess.data.sessions.map(s => s.sessionKey);
+          this.resolveFeishuUsers(keys);
+        }
         const updated = this.agents.find(a => a.id === agentId);
         if (updated) this.selectedAgent = updated;
       } catch (e) { console.warn('[dashboard] refreshAgent failed:', e); }
@@ -609,14 +597,43 @@ function dashboard() {
       return tokens.toString();
     },
 
+    // 飞书用户名缓存
+    feishuUserNameCache: {},
+
+    async resolveFeishuUsers(sessionKeys) {
+      // 从 sessionKey 提取所有飞书 open_id
+      const openIds = new Set();
+      for (const key of sessionKeys) {
+        if (!key) continue;
+        const parts = key.split(':');
+        const channel = parts[2]; // feishu
+        const type = parts[parts.length - 2];
+        const id = parts[parts.length - 1];
+        if (channel === 'feishu' && type === 'direct' && id.startsWith('ou_') && !this.feishuUserNameCache[id]) {
+          openIds.add(id);
+        }
+      }
+      if (openIds.size === 0) return;
+      try {
+        const resp = await fetch(`/api/feishu/users?ids=${[...openIds].join(',')}`);
+        const json = await resp.json();
+        if (json.ok) {
+          Object.assign(this.feishuUserNameCache, json.data);
+        }
+      } catch (e) { console.warn('[dashboard] resolve feishu users failed:', e); }
+    },
+
     formatSessionKey(key) {
       if (!key) return '';
       const parts = key.split(':');
-      // 取最后两部分，格式化显示
-      const agent = parts.find(p => ['feishu', 'webchat', 'whatsapp'].includes(p));
+      const channel = parts[2];
       const type = parts[parts.length - 2];
       const id = parts[parts.length - 1];
-      if (type === 'direct') return `私信 → ${id.slice(0, 8)}...`;
+      if (channel === 'feishu' && type === 'direct') {
+        const cachedName = this.feishuUserNameCache[id];
+        if (cachedName) return `私信 → ${cachedName}`;
+        return `私信 → ${id.slice(0, 8)}...`;
+      }
       if (type === 'main') return '主会话';
       if (type === 'cron') return `定时任务 → ${id.slice(0, 8)}...`;
       if (type === 'subagent') return `子任务 → ${id.slice(0, 8)}...`;
