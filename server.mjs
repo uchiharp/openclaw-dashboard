@@ -73,38 +73,56 @@ function ensureJanitorSkill() {
 - status = running → **跳过**
 - updatedAt 距现在 < 5 分钟（用户正在活跃）→ **跳过**
 - 使用率 < 70% → **跳过**
-- kind 包含 subagent → **跳过**（子 agent 由第四步统一处理）
+- kind 包含 "subagent" → **跳过**（子 agent 由第四步统一处理）
+- **智能保护期**（根据 session 价值动态判断）：
+  - 使用率 < 80%：最后活跃时间 < 2 小时不清理（还有空间，没必要急着清）
+  - 使用率 80%-95%：最后活跃时间 < 30 分钟不清理（快满了，但还在用）
+  - 使用率 ≥ 95%：最后活跃时间 < 10 分钟不清理（已满，但可能在等待回复）
+  - 例外：凌晨 0:00-6:00 期间，保护期缩短为 10 分钟（用户大概率不在活跃）
 - 使用率 ≥ 70% 且 status = done/failed → **触发清理**
 
 ### 第三步：执行 Session 清理
 
 对触发清理的 session：
 1. 用 sessions_history 获取对话内容（includeTools=false）
-2. 过滤内容：保留 role=assistant 的文本回复和 role=user 的关键指令
-3. 蒸馏为要点摘要（不超过 500 字）
+2. 过滤内容：
+   - 保留 role=assistant 且 content type=text 的回复
+   - 保留 role=user 的关键指令（过滤掉 Conversation info 块）
+3. 将过滤后的内容蒸馏为要点摘要（不超过 1000 字，按内容质量决定长度，保留关键代码片段、文件路径、决策理由）
 4. 用 mempalace_check_duplicate 检查是否已存在相似内容（threshold=0.85）
 5. 如果不重复，用 mempalace_add_drawer 存入：
    - wing: session-memory-{agentId}
-   - room: cleaned-sessions
+   - room: 当天日期 YYYY-MM-DD
    - content: 包含 agentId、session 时间范围、蒸馏摘要
-6. 备份 transcript 到 ~/.openclaw/workspace/memory/sessions/{agentId}/{sessionId}.bak
-7. 删除 .jsonl 文件
-8. 从 sessions.json 中删除对应条目
+   - source_file: session-janitor {日期}
+6. **归档 transcript**：cp .jsonl → ~/.openclaw/workspace/memory/sessions/{agentId}/{sessionId}.jsonl
+   - 归档保留 7 天，超过 7 天的归档文件自动删除
+7. 从 sessions.json 中删除对应条目（用 python3 读写 JSON）
 
-### 第四步：清理孤儿子 agent
+### 第四步：清理过期归档和孤儿子 agent
 
-1. 找出 kind 包含 subagent 且 status = done/failed 且 updatedAt 超过 1 小时的 session
-2. 删除对应的 .jsonl 文件和 sessions.json 条目
+**清理过期归档：**
+1. 扫描 ~/.openclaw/workspace/memory/sessions/*/ 下所有 .jsonl 归档文件
+2. 删除创建时间超过 7 天的归档文件
+
+**清理孤儿子 agent：**
+1. 从各 agent 的 sessions.json 中找出：
+   - kind/sessionKey 包含 "subagent"
+   - status = done 或 failed
+   - updatedAt 超过 1 小时
+2. 归档对应的 .jsonl 文件（同第六步归档逻辑）
+3. 从 sessions.json 中删除条目
 
 ### 第五步：报告
 
-- 执行了清理 → 发送报告（清理了哪些 session、释放了多少 token）
-- 没有清理 → 不发消息
-- 有异常 → 立即报告，包含错误详情
+- **执行了清理**：用 sessions_send 发报告给 agent:learn:feishu:direct:ou_b5a6e1c9350d0268c88598c373d87639，内容包含清理了哪些 session、释放了多少 token
+- **没有清理**：不发任何消息
+- **有异常**（如文件删除失败、JSON 解析错误）：立即报告，包含错误详情
 
 ## 注意事项
 - running 的 session 绝对不碰
 - 用户最近活跃的 session 绝对不碰
+- 归档目录不存在时自动创建：mkdir -p ~/.openclaw/workspace/memory/sessions/{agentId}/
 - 文件删除用 trash 命令（如果可用），否则用 rm
 - sessions.json 操作用 python3 确保原子性
 `;
@@ -804,7 +822,7 @@ app.get('/api/events', (req, res) => {
 });
 
 // 启动
-app.listen(PORT, '127.0.0.1', () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`
 ╔══════════════════════════════════════════╗
 ║   OpenClaw Agent Dashboard              ║
