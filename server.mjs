@@ -88,7 +88,7 @@ function ensureJanitorSkill() {
 2. 过滤内容：
    - 保留 role=assistant 且 content type=text 的回复
    - 保留 role=user 的关键指令（过滤掉 Conversation info 块）
-3. 将过滤后的内容蒸馏为要点摘要（不超过 1000 字，按内容质量决定长度，保留关键代码片段、文件路径、决策理由）
+3. 将过滤后的内容蒸馏为要点摘要（不超过 5000 字，按内容质量决定长度，保留关键代码片段、文件路径、决策理由、完整上下文。优先保留：用户指令原文、技术决策及理由、错误信息和修复方案、文件路径和行号、测试结果）
 4. 用 mempalace_check_duplicate 检查是否已存在相似内容（threshold=0.85）
 5. 如果不重复，用 mempalace_add_drawer 存入：
    - wing: session-memory-{agentId}
@@ -96,14 +96,14 @@ function ensureJanitorSkill() {
    - content: 包含 agentId、session 时间范围、蒸馏摘要
    - source_file: session-janitor {日期}
 6. **归档 transcript**：cp .jsonl → ~/.openclaw/workspace/memory/sessions/{agentId}/{sessionId}.jsonl
-   - 归档保留 7 天，超过 7 天的归档文件自动删除
+   - 归档保留 30 天，超过 30 天的归档文件自动删除
 7. 从 sessions.json 中删除对应条目（用 python3 读写 JSON）
 
 ### 第四步：清理过期归档和孤儿子 agent
 
 **清理过期归档：**
 1. 扫描 ~/.openclaw/workspace/memory/sessions/*/ 下所有 .jsonl 归档文件
-2. 删除创建时间超过 7 天的归档文件
+2. 删除创建时间超过 30 天的归档文件
 
 **清理孤儿子 agent：**
 1. 从各 agent 的 sessions.json 中找出：
@@ -347,6 +347,7 @@ app.get('/api/agents/:id', (req, res) => {
       ...s,
       usage: usagePercent(s.totalTokens, s.contextTokens),
       ageMinutes: Math.round((now - (s.updatedAt || 0)) / 60000),
+      displayKey: computeDisplayKey(s.sessionKey),
     }));
   res.json(ok({ sessions: withUsage, dataQuality: quality }));
 });
@@ -884,6 +885,24 @@ app.get('/api/feishu/users', async (req, res) => {
   res.json(ok(names));
 });
 
+function computeDisplayKey(sessionKey) {
+  if (!sessionKey) return '';
+  const parts = sessionKey.split(':');
+  if (parts.length < 3) return sessionKey;
+  const channel = parts[2];
+  const type = parts[parts.length - 2];
+  const id = parts[parts.length - 1];
+  if (channel === 'feishu' && type === 'direct') {
+    const name = FEISHU_USER_CACHE.get(id);
+    if (name) return '私信 → ' + name;
+    return '私信 → ' + id.slice(0, 8) + '...';
+  }
+  if (type === 'main') return '主会话';
+  if (type === 'cron') return '定时任务 → ' + id.slice(0, 8) + '...';
+  if (type === 'subagent') return '子任务 → ' + id.slice(0, 8) + '...';
+  return sessionKey;
+}
+
 // MemPalace
 app.get('/api/mempalace', async (req, res) => {
   try {
@@ -909,6 +928,9 @@ app.get('/api/events', (req, res) => {
 });
 
 // 启动
+// 启动时预加载飞书用户名
+loadFeishuUsers();
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`
 ╔══════════════════════════════════════════╗
