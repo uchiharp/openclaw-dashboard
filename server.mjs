@@ -88,7 +88,9 @@ function ensureJanitorSkill() {
 2. 过滤内容：
    - 保留 role=assistant 且 content type=text 的回复
    - 保留 role=user 的关键指令（过滤掉 Conversation info 块）
-3. 将过滤后的内容蒸馏为要点摘要（不超过 5000 字，按内容质量决定长度，保留关键代码片段、文件路径、决策理由、完整上下文。优先保留：用户指令原文、技术决策及理由、错误信息和修复方案、文件路径和行号、测试结果）
+3. 将过滤后的内容蒸馏为要点摘要（不超过 10000 字），格式如下：
+   - **最近50段 agent 回复原文**（按时间倒序，role=assistant 且 content type=text 的最近50条，完整保留不做压缩）
+   - **蒸馏摘要**（其余历史内容压缩为摘要，保留关键代码片段、文件路径、决策理由。优先保留：用户指令原文、技术决策及理由、错误信息和修复方案、文件路径和行号、测试结果）
 4. 用 mempalace_check_duplicate 检查是否已存在相似内容（threshold=0.85）
 5. 如果不重复，用 mempalace_add_drawer 存入：
    - wing: session-memory-{agentId}
@@ -96,14 +98,14 @@ function ensureJanitorSkill() {
    - content: 包含 agentId、session 时间范围、蒸馏摘要
    - source_file: session-janitor {日期}
 6. **归档 transcript**：cp .jsonl → ~/.openclaw/workspace/memory/sessions/{agentId}/{sessionId}.jsonl
-   - 归档保留 30 天，超过 30 天的归档文件自动删除
+   - 归档保留 90 天，超过 90 天的归档文件自动删除
 7. 从 sessions.json 中删除对应条目（用 python3 读写 JSON）
 
 ### 第四步：清理过期归档和孤儿子 agent
 
 **清理过期归档：**
 1. 扫描 ~/.openclaw/workspace/memory/sessions/*/ 下所有 .jsonl 归档文件
-2. 删除创建时间超过 30 天的归档文件
+2. 删除创建时间超过 90 天的归档文件
 
 **清理孤儿子 agent：**
 1. 从各 agent 的 sessions.json 中找出：
