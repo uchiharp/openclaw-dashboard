@@ -25,10 +25,19 @@
 
 <div x-data="dashboard()" x-init="init()" class="flex h-screen">
 
-  <!-- 左侧边栏 -->
-  <aside class="w-72 bg-card border-r border-border flex flex-col shrink-0">
+  <!-- 左侧边栏：手机上覆盖层 -->
+  <aside class="w-72 bg-card border-r border-border flex flex-col shrink-0
+             md:relative fixed inset-y-0 left-0 z-40
+             max-md:transition-transform max-md:duration-200"
+         :class="sidebarOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'">
+
+    <!-- 手机遮罩 -->
+    <div x-show="sidebarOpen" x-transition.opacity
+         @click="sidebarOpen = false"
+         class="md:hidden fixed inset-0 bg-black/50 z-[-1]"></div>
+
     <div class="p-4 border-b border-border">
-      <h1 class="text-lg font-bold flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity select-none" @click="selectedAgent = null; expandedSession = null; sessionContent = [];" role="button" tabindex="0" @keydown.enter="selectedAgent = null">
+      <h1 class="text-lg font-bold flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity select-none" @click="selectedAgent = null; expandedSession = null; sessionContent = []; sidebarOpen = false;" role="button" tabindex="0" @keydown.enter="selectedAgent = null">
         🦞 OpenClaw 控制台
       </h1>
       <div class="text-xs text-gray-500 mt-1 flex items-center gap-2">
@@ -42,7 +51,7 @@
     <div class="flex-1 overflow-y-auto p-2 space-y-1">
       <template x-for="agent in agents" :key="agent.id">
         <button
-          @click="selectAgent(agent)"
+          @click="selectAgent(agent); sidebarOpen = false;"
           class="w-full text-left px-3 py-2 rounded-lg transition hover:bg-gray-700/50 flex items-center gap-2"
           :class="selectedAgent?.id === agent.id ? 'bg-gray-700/70 ring-1 ring-blue-500/50' : ''"
         >
@@ -82,38 +91,44 @@
   </aside>
 
   <!-- 主内容区 -->
-  <main class="flex-1 overflow-y-auto">
+  <main class="flex-1 overflow-y-auto min-w-0">
+    <!-- 手机顶栏 -->
+    <div class="md:hidden sticky top-0 z-30 bg-card/95 backdrop-blur border-b border-border px-4 py-3 flex items-center gap-3">
+      <button @click="sidebarOpen = true" class="text-xl p-1 hover:bg-gray-700/50 rounded-lg transition">☰</button>
+      <span class="text-sm font-bold truncate" x-text="selectedAgent ? (selectedAgent.emoji + ' ' + selectedAgent.displayName) : '🦞 OpenClaw'"></span>
+    </div>
+
     <!-- 无选中时显示总览 -->
     <template x-if="!selectedAgent">
-      <div class="p-6">
+      <div class="p-4 md:p-6">
         <h2 class="text-lg font-semibold mb-4">系统总览</h2>
-        <!-- 概览卡片 -->
-        <div class="grid grid-cols-4 gap-4 mb-6">
-          <div class="bg-card rounded-xl p-4 border border-border">
+        <!-- 概览卡片：手机2列，桌面4列 -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
+          <div class="bg-card rounded-xl p-3 md:p-4 border border-border">
             <div class="text-2xl font-bold" x-text="agents.length"></div>
-            <div class="text-sm text-gray-500">Agent 数量</div>
+            <div class="text-xs md:text-sm text-gray-500">Agent 数量</div>
           </div>
-          <div class="bg-card rounded-xl p-4 border border-border">
+          <div class="bg-card rounded-xl p-3 md:p-4 border border-border">
             <div class="text-2xl font-bold text-green-400" x-text="agents.reduce((s, a) => s + a.running, 0)"></div>
-            <div class="text-sm text-gray-500">运行中</div>
+            <div class="text-xs md:text-sm text-gray-500">运行中</div>
           </div>
-          <div class="bg-card rounded-xl p-4 border border-border">
+          <div class="bg-card rounded-xl p-3 md:p-4 border border-border">
             <div class="text-2xl font-bold text-red-400" x-text="agents.reduce((s, a) => s + a.failed, 0)"></div>
-            <div class="text-sm text-gray-500">异常</div>
+            <div class="text-xs md:text-sm text-gray-500">异常</div>
           </div>
-          <div class="bg-card rounded-xl p-4 border border-border">
+          <div class="bg-card rounded-xl p-3 md:p-4 border border-border">
             <div class="text-2xl font-bold text-blue-400" x-text="formatBytes(agents.reduce((s, a) => s + a.diskUsage, 0))"></div>
-            <div class="text-sm text-gray-500">磁盘占用</div>
+            <div class="text-xs md:text-sm text-gray-500">磁盘占用</div>
           </div>
         </div>
 
         <!-- 使用率排行 -->
-        <div class="bg-card rounded-xl p-4 border border-border">
+        <div class="bg-card rounded-xl p-3 md:p-4 border border-border">
           <h3 class="text-sm font-semibold mb-3 text-gray-400">Token 使用率（最高会话）</h3>
           <div class="space-y-2">
             <template x-for="agent in [...agents].sort((a, b) => b.maxUsage - a.maxUsage).filter(a => a.maxUsage > 0)" :key="agent.id">
-              <div class="flex items-center gap-3">
-                <span class="w-28 text-sm truncate" x-text="(agent.emoji || '🤖') + ' ' + agent.displayName"></span>
+              <div class="flex items-center gap-2 md:gap-3">
+                <span class="w-20 md:w-28 text-xs md:text-sm truncate" x-text="(agent.emoji || '🤖') + ' ' + agent.displayName"></span>
                 <div class="flex-1 bg-gray-700 rounded-full h-2">
                   <div class="h-2 rounded-full transition-all"
                        :class="agent.maxUsage >= 70 ? 'bg-red-500' : agent.maxUsage >= 40 ? 'bg-yellow-500' : 'bg-green-500'"
@@ -128,17 +143,17 @@
         </div>
 
         <!-- 磁盘占用排行 -->
-        <div class="bg-card rounded-xl p-4 border border-border mt-4">
+        <div class="bg-card rounded-xl p-3 md:p-4 border border-border mt-4">
           <h3 class="text-sm font-semibold mb-3 text-gray-400">磁盘占用排行</h3>
           <div class="space-y-2">
             <template x-for="agent in [...agents].sort((a, b) => b.diskUsage - a.diskUsage).filter(a => a.diskUsage > 0)" :key="agent.id">
-              <div class="flex items-center gap-3">
-                <span class="w-28 text-sm truncate" x-text="(agent.emoji || '🤖') + ' ' + agent.displayName"></span>
+              <div class="flex items-center gap-2 md:gap-3">
+                <span class="w-20 md:w-28 text-xs md:text-sm truncate" x-text="(agent.emoji || '🤖') + ' ' + agent.displayName"></span>
                 <div class="flex-1 bg-gray-700 rounded-full h-2">
                   <div class="h-2 rounded-full transition-all bg-purple-500"
                        :style="'width: ' + Math.min(agent.diskUsage / Math.max(...agents.map(a => a.diskUsage || 1), 1) * 100, 100) + '%'"></div>
                 </div>
-                <span class="text-xs font-mono w-16 text-right text-gray-400" x-text="formatBytes(agent.diskUsage)"></span>
+                <span class="text-xs font-mono w-14 md:w-16 text-right text-gray-400" x-text="formatBytes(agent.diskUsage)"></span>
               </div>
             </template>
           </div>
@@ -148,43 +163,65 @@
 
     <!-- 选中 Agent 时显示详情 -->
     <template x-if="selectedAgent">
-      <div class="p-6 space-y-4 fade-in">
+      <div class="p-4 md:p-6 space-y-4 fade-in">
         <!-- Agent 头部 -->
-        <div class="flex items-center gap-3">
-          <span class="text-3xl" x-text="selectedAgent.emoji || '🤖'"></span>
-          <div>
-            <h2 class="text-xl font-bold" x-text="selectedAgent.displayName"></h2>
-            <div class="text-sm text-gray-500">
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="text-2xl md:text-3xl" x-text="selectedAgent.emoji || '🤖'"></span>
+          <div class="min-w-0">
+            <h2 class="text-lg md:text-xl font-bold truncate" x-text="selectedAgent.displayName"></h2>
+            <div class="text-xs md:text-sm text-gray-500 flex flex-wrap gap-x-2">
               <span x-text="selectedAgent.id"></span>
-              <span class="mx-2">·</span>
+              <span>·</span>
               <span x-text="formatBytes(selectedAgent.diskUsage)"></span>
-              <span class="mx-2">·</span>
+              <span>·</span>
               <span x-text="agentSessions.length + ' 个会话'"></span>
               <template x-if="selectedAgent.dataQuality && selectedAgent.dataQuality !== 'ok'">
-                <span class="text-yellow-400 ml-2" x-text="'⚠️ 数据异常: ' + selectedAgent.dataQuality"></span>
+                <span class="text-yellow-400" x-text="'⚠️ 数据异常: ' + selectedAgent.dataQuality"></span>
               </template>
             </div>
           </div>
-          <div class="ml-auto flex gap-2">
+          <!-- 按钮：手机收起/展开 -->
+          <div class="flex-1"></div>
+          <button @click="agentActionsOpen = !agentActionsOpen"
+                  class="md:hidden text-xs px-2 py-1 bg-gray-700 rounded-lg text-gray-300">⋯</button>
+          <div class="hidden md:flex gap-2">
             <button @click="archiveAgent(selectedAgent.id)"
                     :disabled="archiveInProgress"
-                    class="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition disabled:opacity-50 disabled:cursor-not-allowed ring-2 ring-blue-300/50 shadow-lg shadow-blue-500/20"
+                    class="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
                     x-text="archiveInProgress ? '⏳ 蒸馏中...' : '📦 归档会话'">
             </button>
             <button @click="resetAgent(selectedAgent.id)"
-                    class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg font-medium transition ring-2 ring-red-300/50 shadow-lg shadow-red-500/20">
+                    class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg font-medium transition">
               🗑 重置所有会话
             </button>
             <button @click="refreshAgent(selectedAgent.id)"
-                    class="px-3 py-1.5 text-sm bg-gray-700/60 hover:bg-gray-600/60 text-gray-300 hover:text-white rounded-lg font-medium transition ring-2 ring-gray-400/40 shadow-lg shadow-gray-500/10">
+                    class="px-3 py-1.5 text-sm bg-gray-700/60 hover:bg-gray-600/60 text-gray-300 hover:text-white rounded-lg font-medium transition">
               🔄 刷新
             </button>
           </div>
         </div>
 
+        <!-- 手机端操作按钮展开 -->
+        <div x-show="agentActionsOpen" x-transition
+             class="md:hidden flex flex-wrap gap-2 bg-card rounded-lg p-3 border border-border">
+          <button @click="archiveAgent(selectedAgent.id); agentActionsOpen = false;"
+                  :disabled="archiveInProgress"
+                  class="flex-1 min-w-[100px] px-3 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition disabled:opacity-50"
+                  x-text="archiveInProgress ? '⏳ 蒸馏中...' : '📦 归档会话'">
+          </button>
+          <button @click="resetAgent(selectedAgent.id); agentActionsOpen = false;"
+                  class="flex-1 min-w-[100px] px-3 py-2 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg font-medium transition">
+            🗑 重置
+          </button>
+          <button @click="refreshAgent(selectedAgent.id); agentActionsOpen = false;"
+                  class="flex-1 min-w-[100px] px-3 py-2 text-sm bg-gray-700/60 hover:bg-gray-600/60 text-gray-300 rounded-lg font-medium transition">
+            🔄 刷新
+          </button>
+        </div>
+
         <!-- 正在运行的任务 -->
         <template x-if="runningTasks.length > 0">
-          <div class="bg-green-900/20 border border-green-800/50 rounded-xl p-4">
+          <div class="bg-green-900/20 border border-green-800/50 rounded-xl p-3 md:p-4">
             <h3 class="text-sm font-semibold text-green-400 mb-2">⚡ 正在执行</h3>
             <div class="space-y-2">
               <template x-for="task in runningTasks" :key="task.sessionId">
@@ -209,9 +246,9 @@
 
         <!-- Session 列表 -->
         <div class="bg-card rounded-xl border border-border">
-          <div class="p-4 border-b border-border flex items-center justify-between">
+          <div class="p-3 md:p-4 border-b border-border flex items-center justify-between">
             <h3 class="text-sm font-semibold text-gray-400">会话列表</h3>
-            <div class="flex items-center gap-3 text-[10px] text-gray-600">
+            <div class="hidden md:flex items-center gap-3 text-[10px] text-gray-600">
               <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-yellow-400"></span>运行中</span>
               <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-400"></span>已完成</span>
               <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-400"></span>失败</span>
@@ -221,7 +258,7 @@
           <div class="divide-y divide-border">
             <template x-for="session in agentSessions" :key="session.sessionId">
               <div>
-                <div class="px-4 py-3 flex items-center gap-3 hover:bg-gray-700/30 transition cursor-pointer"
+                <div class="px-3 md:px-4 py-3 flex items-center gap-2 md:gap-3 hover:bg-gray-700/30 transition cursor-pointer"
                      @click="toggleSessionContent(session)">
                   <div class="w-2 h-2 rounded-full shrink-0"
                        :class="{
@@ -231,11 +268,12 @@
                          'bg-orange-400': ['timeout', 'unknown'].includes(session.status)
                        }"></div>
                   <div class="flex-1 min-w-0">
-                    <div class="text-sm truncate" x-text="formatSessionKey(session.sessionKey)"></div>
+                    <div class="text-sm truncate" x-text="session.displayKey"></div>
                     <div class="text-xs text-gray-500" x-text="session.model + ' · ' + session.ageMinutes + ' 分钟前'"></div>
                   </div>
-                  <div class="flex items-center gap-3">
-                    <div class="flex items-center gap-1.5">
+                  <div class="flex items-center gap-2 md:gap-3 shrink-0">
+                    <!-- Token 使用率 -->
+                    <div class="hidden sm:flex items-center gap-1.5">
                       <div class="w-16 bg-gray-700 rounded-full h-1.5">
                         <div class="h-1.5 rounded-full"
                              :class="session.usage >= 70 ? 'bg-red-500' : session.usage >= 40 ? 'bg-yellow-500' : 'bg-green-500'"
@@ -245,18 +283,19 @@
                             :class="session.usage >= 70 ? 'text-red-400' : 'text-gray-400'"
                             x-text="session.usage + '%'"></span>
                     </div>
-                    <span class="text-xs text-gray-500 w-20 text-right" x-text="formatTokens(session.totalTokens)"></span>
+                    <!-- Token 总量 -->
+                    <span class="text-xs text-gray-500 w-14 text-right" x-text="formatTokens(session.totalTokens)"></span>
                     <span class="text-xs text-gray-600 select-none"
                           x-text="expandedSession === session.sessionId ? '▲' : '▼'"
                           @click.stop></span>
                     <button @click.stop="confirmKill(session)"
-                            class="text-xs px-2.5 py-1 bg-orange-600/80 hover:bg-orange-500 text-white rounded-md font-medium transition ring-2 ring-orange-300/50 shadow-md shadow-orange-500/20">
+                            class="text-xs px-2 py-1 bg-orange-600/80 hover:bg-orange-500 text-white rounded-md font-medium transition">
                       终止
                     </button>
                   </div>
                 </div>
                 <template x-if="expandedSession === session.sessionId">
-                  <div class="px-4 pb-4 bg-dark/40">
+                  <div class="px-3 md:px-4 pb-4 bg-dark/40">
                     <template x-if="sessionContentLoading">
                       <div class="text-xs text-gray-500 py-2">加载中...</div>
                     </template>
@@ -265,22 +304,22 @@
                         <template x-for="(msg, i) in sessionContent" :key="msg.id || i">
                           <div class="flex gap-2 text-sm" :class="msg.role === 'user' ? 'justify-end' : ''">
                             <template x-if="msg.role === 'user'">
-                              <div class="bg-blue-900/40 border border-blue-800/50 rounded-lg px-3 py-2 max-w-[80%]">
+                              <div class="bg-blue-900/40 border border-blue-800/50 rounded-lg px-3 py-2 max-w-[85%] md:max-w-[80%]">
                                 <template x-for="c in msg.content" :key="c.type">
-                                  <div x-show="c.type === 'text'" class="text-gray-200 break-all" x-text="c.text"></div>
+                                  <div x-show="c.type === 'text'" class="text-gray-200 break-all text-xs md:text-sm" x-text="c.text"></div>
                                 </template>
                               </div>
                             </template>
                             <template x-if="msg.role === 'assistant'">
-                              <div class="bg-gray-800/60 border border-gray-700/50 rounded-lg px-3 py-2 max-w-[85%]">
+                              <div class="bg-gray-800/60 border border-gray-700/50 rounded-lg px-3 py-2 max-w-[90%] md:max-w-[85%]">
                                 <template x-for="c in msg.content" :key="c.type">
                                   <template x-if="c.type === 'text'">
-                                    <div class="text-gray-300 break-all whitespace-pre-wrap" x-text="c.text"></div>
+                                    <div class="text-gray-300 break-all whitespace-pre-wrap text-xs md:text-sm" x-text="c.text"></div>
                                   </template>
                                   <template x-if="c.type === 'toolCall'">
-                                    <div class="text-blue-300 text-xs mt-1 flex items-center gap-1">
+                                    <div class="text-blue-300 text-xs mt-1 flex flex-wrap gap-1">
                                       <span class="bg-blue-900/50 px-1.5 py-0.5 rounded font-mono" x-text="c.name"></span>
-                                      <span class="text-gray-500 font-mono truncate max-w-xs"
+                                      <span class="text-gray-500 font-mono truncate max-w-[200px]"
                                             x-text="JSON.stringify(c.arguments || {}).slice(0, 120)"></span>
                                     </div>
                                   </template>
@@ -296,7 +335,7 @@
                         <template x-if="sessionContentTotal > sessionContent.length">
                           <div class="text-center">
                             <button @click.stop="loadMoreSessionContent()"
-                                    class="text-xs text-blue-400 hover:text-blue-300 px-3 py-1 rounded ring-2 ring-blue-400/40 hover:ring-blue-400/70 shadow shadow-blue-500/10 transition"
+                                    class="text-xs text-blue-400 hover:text-blue-300 px-3 py-1 rounded border border-blue-400/40 hover:border-blue-400/70 transition"
                                     x-text="'加载更早的对话（还有 ' + (sessionContentTotal - sessionContent.length) + ' 条）'">
                             </button>
                           </div>
@@ -318,14 +357,14 @@
 
         <!-- 错误日志 -->
         <div class="bg-card rounded-xl border border-border">
-          <div class="p-4 border-b border-border flex items-center">
+          <div class="p-3 md:p-4 border-b border-border flex items-center">
             <h3 class="text-sm font-semibold text-gray-400">错误日志</h3>
             <span x-show="errors.length === 0" class="text-xs text-gray-600 ml-2">✅ 无错误</span>
           </div>
           <template x-if="errors.length > 0">
             <div class="divide-y divide-border max-h-64 overflow-y-auto">
               <template x-for="(err, i) in errors" :key="i">
-                <div class="px-4 py-2 text-sm">
+                <div class="px-3 md:px-4 py-2 text-sm">
                   <div class="flex items-center gap-2 text-xs text-gray-500 mb-1">
                     <span x-text="(err.ageMinutes || 0) + ' 分钟前'"></span>
                     <span class="text-gray-600" x-text="err.source === 'gateway-log' ? '系统日志' : err.sessionKey?.split(':').pop()"></span>
@@ -342,9 +381,9 @@
 </div>
 
 <!-- Toast -->
-<div class="fixed bottom-4 right-4 space-y-2 z-50">
+<div class="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-80 flex flex-col items-end gap-2 z-50">
   <template x-for="(toast, i) in toasts" :key="toast.id">
-    <div class="px-4 py-2 rounded-lg shadow-lg text-sm fade-in"
+    <div class="w-full px-4 py-2 rounded-lg shadow-lg text-sm fade-in"
          :class="toast.type === 'error' ? 'bg-red-900 text-red-200' : toast.type === 'success' ? 'bg-green-900 text-green-200' : 'bg-card text-gray-200 border border-border'">
       <span x-text="toast.message"></span>
     </div>
@@ -352,8 +391,6 @@
 </div>
 
 <script>
-// Agent 名字统一从后端 openclaw.json 的 identity.name 读取，不再前端硬编码
-
 function dashboard() {
   return {
     agents: [],
@@ -370,6 +407,8 @@ function dashboard() {
     sessionContent: [],
     sessionContentLoading: false,
     sessionContentTotal: 0,
+    sidebarOpen: false,
+    agentActionsOpen: false,
 
     async init() {
       await this.loadSystem();
@@ -423,6 +462,7 @@ function dashboard() {
 
     async selectAgent(agent) {
       this.selectedAgent = agent;
+      this.agentActionsOpen = false;
       await this.refreshAgent(agent.id);
     },
 
@@ -439,18 +479,13 @@ function dashboard() {
         if (sess.code === 0) this.agentSessions = sess.data.sessions;
         if (run.code === 0) this.runningTasks = run.data;
         if (err.code === 0) this.errors = err.data;
-        // 异步解析飞书用户名（不阻塞渲染）
-        if (sess.code === 0 && sess.data.sessions) {
-          const keys = sess.data.sessions.map(s => s.sessionKey);
-          this.resolveFeishuUsers(keys);
-        }
         const updated = this.agents.find(a => a.id === agentId);
         if (updated) this.selectedAgent = updated;
       } catch (e) { console.warn('[dashboard] refreshAgent failed:', e); }
     },
 
     confirmKill(session) {
-      if (confirm('确定终止会话？\n' + this.formatSessionKey(session.sessionKey))) this.killSession(session.sessionId);
+      if (confirm('确定终止会话？\n' + (session.displayKey || session.sessionKey))) this.killSession(session.sessionId);
     },
 
     async killSession(sessionId) {
@@ -490,7 +525,6 @@ function dashboard() {
         const json = await res.json();
         if (json.code === 0) {
           this.toast(json.data.message, 'info');
-          // 轮询归档状态
           this.pollArchiveStatus(agentId);
         } else { this.toast(json.message, 'error'); this.archiveInProgress = false; }
       } catch (e) { this.toast('归档失败: ' + e.message, 'error'); this.archiveInProgress = false; }
@@ -595,49 +629,6 @@ function dashboard() {
       if (!tokens) return '0';
       if (tokens >= 1000) return (tokens / 1000).toFixed(0) + 'k';
       return tokens.toString();
-    },
-
-    // 飞书用户名缓存
-    feishuUserNameCache: {},
-
-    async resolveFeishuUsers(sessionKeys) {
-      // 从 sessionKey 提取所有飞书 open_id
-      const openIds = new Set();
-      for (const key of sessionKeys) {
-        if (!key) continue;
-        const parts = key.split(':');
-        const channel = parts[2]; // feishu
-        const type = parts[parts.length - 2];
-        const id = parts[parts.length - 1];
-        if (channel === 'feishu' && type === 'direct' && id.startsWith('ou_') && !this.feishuUserNameCache[id]) {
-          openIds.add(id);
-        }
-      }
-      if (openIds.size === 0) return;
-      try {
-        const resp = await fetch(`/api/feishu/users?ids=${[...openIds].join(',')}`);
-        const json = await resp.json();
-        if (json.ok) {
-          Object.assign(this.feishuUserNameCache, json.data);
-        }
-      } catch (e) { console.warn('[dashboard] resolve feishu users failed:', e); }
-    },
-
-    formatSessionKey(key) {
-      if (!key) return '';
-      const parts = key.split(':');
-      const channel = parts[2];
-      const type = parts[parts.length - 2];
-      const id = parts[parts.length - 1];
-      if (channel === 'feishu' && type === 'direct') {
-        const cachedName = this.feishuUserNameCache[id];
-        if (cachedName) return `私信 → ${cachedName}`;
-        return `私信 → ${id.slice(0, 8)}...`;
-      }
-      if (type === 'main') return '主会话';
-      if (type === 'cron') return `定时任务 → ${id.slice(0, 8)}...`;
-      if (type === 'subagent') return `子任务 → ${id.slice(0, 8)}...`;
-      return key;
     },
   };
 }
